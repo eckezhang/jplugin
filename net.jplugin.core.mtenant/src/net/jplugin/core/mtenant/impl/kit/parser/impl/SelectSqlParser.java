@@ -3,9 +3,12 @@ package net.jplugin.core.mtenant.impl.kit.parser.impl;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
+import java.util.Set;
+import java.util.Stack;
 import java.util.TreeMap;
 
 import net.jplugin.core.mtenant.impl.kit.parser.SqlParser;
@@ -14,105 +17,218 @@ import net.jplugin.core.mtenant.impl.kit.utils.StringUtils;
 
 public class SelectSqlParser implements SqlParser {
 
-	 @Override
-	    public String parse(String sourceSql, Map<String, Object> params, List<String> ignoreTables) {
+	@Override
+	public String parse(String sourceSql, Map<String, Object> params,
+			List<String> ignoreTables) {
+		if (params.isEmpty()) {
+			return sourceSql;
+		}
+		if (sourceSql.contains("union all")) {
+			String preSql = SqlHelper.format(sourceSql.substring(0,
+					sourceSql.indexOf("union all")));
+			String subSql = SqlHelper.format(sourceSql.substring(
+					sourceSql.indexOf("union all")).replace("union all", ""));
+			return parse(preSql, params, ignoreTables) + " union all "
+					+ parse(subSql, params, ignoreTables);
 
-	        if (params.isEmpty()) {
-	            return sourceSql;
-	        }
+		} else {
+			if (!sourceSql.contains("(")) {
+				return preParse(sourceSql, params, ignoreTables);
+				
+			} else {
+				return dealBracket(sourceSql, params, ignoreTables);
+			}
+		}
+	}
 
+	public String preParse(String sourceSql, Map<String, Object> params,
+			List<String> ignoreTables) {
+		if (params.isEmpty()) {
+			return sourceSql;
+		}
+		if (!sourceSql.contains("select")) {
+			return sourceSql;
+		}
 
-	        String sql = SqlHelper.format(sourceSql);
-	        if (!StringUtils.startsWith(sql, "select")) {
-	            return sql;
-	        }
+		String[] sqlArray = StringUtils.split(sourceSql, " ");
+		if (ignoreTables == null) {
+			ignoreTables = new ArrayList<>();
+		}
+		boolean whereIf = false;
+		int length = sqlArray.length;
+		TreeMap<Integer, String> map = new TreeMap<>();
+		Set<String> aliasList = new HashSet<String>();
+		int fromPosition = 0;
+		int wherePosition = 0;
+		int beforeByPosition = 0;
+		for (int i = 0; i < length; i++) {
+			if ("from".equals(sqlArray[i])) {
+				fromPosition = i;
+				if (i + 1 == length) {
+					// select * from
+					throw new RuntimeException("error sql: " + sourceSql);
+				}
 
-	        String[] sqlArray = StringUtils.split(sql, " ");
-	        if (ignoreTables == null) {
-	            ignoreTables = new ArrayList<>();
-	        }
+			}
+				if ( "limit".equals(sqlArray[i])|| (("order".equals(sqlArray[i])||"group".equals(sqlArray[i]))&& "by".equals(sqlArray[i + 1]))) {
+					beforeByPosition = i;
+				}
+			if ("where".equals(sqlArray[i])) {
+				wherePosition = i;
+				map.put(i + 1, "Y");
+				whereIf = true;
+				aliasList.add(sqlArray[i - 1]);
+			}
+		}
+		if (whereIf) {
+			for (int i = fromPosition; i < wherePosition; i++) {
 
-	        int length = sqlArray.length;
-	        TreeMap<Integer, String> map = new TreeMap<>();
-	        TreeMap<Integer, List<String>> tablemap = new TreeMap<>();
-	        Map<String, String> aliasmap = new HashMap<>();
-	        for (int i = 0; i < length; i++) {
-	            if ("from".equals(sqlArray[i])) {
-	                checkTable(sqlArray, i + 1, ignoreTables, map, tablemap, aliasmap);
-	            }
-	        }
+				if (("left".equals(sqlArray[i]) || "right".equals(sqlArray[i])
+						|| "inner".equals(sqlArray[i]) || "full"
+							.equals(sqlArray[i]))
+						&& "join".equals(sqlArray[i + 1])) {
+					aliasList.add(sqlArray[i - 1]);
+				}
+				if ("as".equals(sqlArray[i])) {
+					aliasList.add(sqlArray[i + 1]);
+				}
+				if (sqlArray[i].contains(",")) {
+					aliasList.add(sqlArray[i - 1]);
+				}
+				if ("on".equals(sqlArray[i])) {
+					aliasList.add(sqlArray[i - 1]);
+				}
 
-	        if (map.size() == 0) {
-	            return sourceSql;
-	        }
-	        NavigableMap<Integer, String> nmap = map.descendingMap();
-	        List<String> list = new ArrayList<>();
-	        list.addAll(Arrays.asList(sqlArray));
+			}
+		}
+		// 表示不存在where
+		if (wherePosition == 0) {
+			if(0<beforeByPosition){
+				for (int i = fromPosition; i < beforeByPosition; i++) {
+					if (("left".equals(sqlArray[i]) || "right".equals(sqlArray[i])
+							|| "inner".equals(sqlArray[i]) || "full"
+								.equals(sqlArray[i]))
+							&& "join".equals(sqlArray[i + 1])) {
+						aliasList.add(sqlArray[i - 1]);
+					}
+					if ("as".equals(sqlArray[i])) {
+						aliasList.add(sqlArray[i + 1]);
+					}
+					if (sqlArray[i].contains(",")) {
+						aliasList.add(sqlArray[i - 1]);
+					}
+					if ("on".equals(sqlArray[i])) {
+						aliasList.add(sqlArray[i - 1]);
+					}
+				}
+				aliasList.add(sqlArray[beforeByPosition - 1]);
+			}else{
+				aliasList.add(sqlArray[length - 1]);
+			}
+			
+		}
 
-	        for (int i : nmap.keySet()) {
-	            if (i + 1 <= list.size()) {
-	                list.add(i, SqlHelper.createWheres(aliasmap, tablemap.get(i), params, nmap.get(i)));
-	            } else {
-	                list.add(SqlHelper.createWheres(aliasmap, tablemap.get(i), params, nmap.get(i)));
-	            }
-	        }
+		Map<String, Object> bridgeMap = new HashMap<String, Object>();
+		for (Map.Entry<String, Object> entry : params.entrySet()) {
 
-	        return SqlHelper.toSql(list);
-	    }
+			for (String alias : aliasList) {
+				if (!ignoreTables.contains(alias)
+						&& !alias.startsWith("tempT_able_")) {
+					bridgeMap.put(alias + "." + entry.getKey(),
+							entry.getValue());
+				}
+			}
+		}
+		params = bridgeMap;
+		List<String> bracketList = new ArrayList<>();
+		if (!whereIf) {
+			map.put(length, "N");
+		} else {
 
+			bracketList.addAll(Arrays.asList(sqlArray));
+			bracketList.add(wherePosition + 1, "(");
+			// 因为上文增加了(，数组总长度加了1
+			bracketList.add(length + 1, ")");
+		}
+		if (map.size() == 0) {
+			return sourceSql;
+		}
+		NavigableMap<Integer, String> nmap = map.descendingMap();
+		List<String> list = new ArrayList<>();
+		if (0 < bracketList.size()) {
+			list.addAll(bracketList);
+		} else {
+			list.addAll(Arrays.asList(sqlArray));
+		}
+		for (int i : nmap.keySet()) {
+			if (i + 1 <= list.size()) {
+				list.add(i, SqlHelper.createWhere(params, nmap.get(i)));
+			} else {
+				list.add(SqlHelper.createWhere(params, nmap.get(i)));
+			}
+		}
+		return SqlHelper.toSql(list);
+	}
 
-	 private void checkTable(String[] sqlArray, int pos, List<String> ignoreTables, TreeMap<Integer, String> map, TreeMap<Integer, List<String>> tablemap, Map<String, String> aliasmap) {
-	        List<String> list = new ArrayList<>();
-	        StringBuilder sb = new StringBuilder();
-	        boolean flag = true;
-	        boolean where = false;
-	        int position = 0;
-	        for (int i = pos; i < sqlArray.length; i++) {
-	            if ("where".equals(sqlArray[i])) {
-	                where = true;
-	                position = i + 1;
-	                break;
-	            }
+	public String dealTempTables(String multiSql,
+			Map<String, String> tempTableMap) {
+		for (Map.Entry<String, String> tempTable : tempTableMap.entrySet()) {
+			multiSql = multiSql.replace(tempTable.getKey(),
+					tempTable.getValue());
+		}
+		if (multiSql.contains("tempT_able_")) {
+			multiSql = dealTempTables(multiSql, tempTableMap);
+		}
+		return multiSql;
+	}
 
-	            if (("left".equals(sqlArray[i]) || "right".equals(sqlArray[i]) || "inner".equals(sqlArray[i]) || "full".equals(sqlArray[i])) && "join".equals(sqlArray[i + 1])) {
-	                flag = false;
-	            }
+	public String dealBracket(String sourceSql, Map<String, Object> params,
+			List<String> ignoreTables) {
+		String[] sqlArray = StringUtils.split(sourceSql, " ");
+		int length = sqlArray.length;
 
-	            if (")".equals(sqlArray[i]) || "limit".equals(sqlArray[i]) || ("order".equals(sqlArray[i])) && "by".equals(sqlArray[i + 1])) {
-	                position = i;
-	                break;
-	            }
-	            if (flag) {
-	                sb.append(sqlArray[i]).append(" ");
-	            }
-	        }
+		// 处理内嵌的select
+		Stack<String> subSqlStack = new Stack<String>();
+		Map<String, String> tempTableMap = new HashMap<String, String>();
+		for (int i = 0; i < length; i++) {
 
-	        if (!where && position == 0) {
-	            position = sqlArray.length;
-	        }
+			if (subSqlStack.isEmpty()) {
+				// 如果栈是空的
+				subSqlStack.push(sqlArray[i]);
+			} else if (sqlArray[i].equals(")")) {
+				// 说明此时栈里已有左括号，开始出栈
+				int stackSize = subSqlStack.size();
+				String rightBracket = ")";
+				String subPartSql="";
+				for (int j = 0; j < stackSize; j++) {
+					if (subSqlStack.peek().equals("(")) {
+						subPartSql = subSqlStack.pop()
+								+ preParse(subPartSql, params, ignoreTables)+ " " + rightBracket;
+						break;
+					} else {
+						subPartSql = subSqlStack.pop() +" " +subPartSql;
+					}
+				}
 
-	        String[] tables = StringUtils.split(sb.toString().trim(), ",");
+				String tempTableKey = "tempT_able_" + i;
+				tempTableMap.put(tempTableKey, subPartSql);
+				subSqlStack.push(tempTableKey);
 
-	        for (String t : tables) {
-	            if (StringUtils.contains(t.trim(), " ")) {
-	                String table = StringUtils.split(t.trim(), " ")[0];
-	                if (!ignoreTables.contains(table)) {
-	                    String alias = StringUtils.split(t.trim(), " ")[1];
-	                    list.add(table);
-	                    aliasmap.put(table, alias);
-	                }
-	            } else {
-	                if (!ignoreTables.contains(t)) {
-	                    list.add(t);
-	                }
-	            }
-	        }
+			} else {
 
-	        if (list.size() > 0) {
-	            map.put(position, where ? "Y" : "N");
-	            tablemap.put(position, list);
-	        }
+				subSqlStack.push(sqlArray[i]);
+			}
+		}
+		// 处理嵌套完后，做一次总体处理
+		String wholeSql = "";
+		int stackLength = subSqlStack.size();
+		for (int j = 0; j < stackLength; j++) {
+			wholeSql = subSqlStack.pop() + " " + wholeSql;
+		}
+		String multiSql = preParse(wholeSql, params, ignoreTables);
 
-	    }
+		multiSql = dealTempTables(multiSql, tempTableMap);
 
+		return multiSql;
+	}
 }
