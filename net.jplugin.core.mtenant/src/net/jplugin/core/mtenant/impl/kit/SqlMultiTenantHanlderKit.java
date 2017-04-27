@@ -114,6 +114,28 @@ public class SqlMultiTenantHanlderKit {
 		} else {
 			return sql;
 		}
-		return parser.parse(sql, params, ignores.get(dataSourceName));
+		String dealSql = parser.parse(sql, params, ignores.get(dataSourceName));
+		
+		/*List<String> ignoreTables = ignores.get(dataSourceName);
+		boolean havePlatform = false;
+		for(Map.Entry<String, Object> entry : params.entrySet()){
+			if(dealSql.contains(entry.getKey())){
+				havePlatform=true;
+				break;
+			}
+		}
+		boolean haveIgnore=false;
+		if(!havePlatform){
+			for(String ignore: ignoreTables){
+				if(dealSql.contains(ignore)){
+					haveIgnore=true;
+					break;
+				}
+			}
+		}
+		if(!haveIgnore&&!havePlatform){
+			throw new IllegalArgumentException("SQL parse error");
+		}*/
+		return dealSql;
 	}
 }
