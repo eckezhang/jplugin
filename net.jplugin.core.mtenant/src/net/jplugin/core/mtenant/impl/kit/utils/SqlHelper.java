@@ -34,7 +34,11 @@ public class SqlHelper {
 	public static String toSql(List<String> list) {
 		StringBuilder sb = new StringBuilder();
 		for (String s : list) {
-			sb.append(s).append(" ");
+			if (checkFunctionStr(s)) {
+				sb.append(s);
+			} else {
+				sb.append(s).append(" ");
+			}
 		}
 		String sql = sb.toString().trim();
 		while (true) {
@@ -94,7 +98,8 @@ public class SqlHelper {
 		}
 	}
 
-	public static String createWheres(Map<String, String> aliasmap, List<String> tables, Map<String, Object> params, String flag) {
+	public static String createWheres(Map<String, String> aliasmap,
+			List<String> tables, Map<String, Object> params, String flag) {
 		if (tables == null || tables.size() == 0) {
 			return "";
 		}
@@ -106,17 +111,22 @@ public class SqlHelper {
 		for (String t : tables) {
 			for (String key : params.keySet()) {
 				Object value = params.get(key);
-				if (value instanceof Integer || value instanceof Long || value instanceof Float || value instanceof Double) {
+				if (value instanceof Integer || value instanceof Long
+						|| value instanceof Float || value instanceof Double) {
 					if (aliasmap.containsKey(t)) {
-						sb.append(aliasmap.get(t)).append(".").append(key).append("=").append(value).append(" and ");
+						sb.append(aliasmap.get(t)).append(".").append(key)
+								.append("=").append(value).append(" and ");
 					} else {
-						sb.append(key).append("=").append(value).append(" and ");
+						sb.append(key).append("=").append(value)
+								.append(" and ");
 					}
 				} else {
 					if (aliasmap.containsKey(t)) {
-						sb.append(aliasmap.get(t)).append(".").append(key).append("='").append(value).append("' and ");
+						sb.append(aliasmap.get(t)).append(".").append(key)
+								.append("='").append(value).append("' and ");
 					} else {
-						sb.append(key).append("='").append(value).append("' and ");
+						sb.append(key).append("='").append(value)
+								.append("' and ");
 					}
 				}
 			}
@@ -126,6 +136,19 @@ public class SqlHelper {
 			return StringUtils.substringBeforeLast(sb.toString(), " and ");
 		} else {
 			return sb.toString();
+		}
+	}
+
+	public static boolean checkFunctionStr(String str) {
+		if (str.equals("avg") || str.equals("count") || str.equals("first")
+				|| str.equals("last") || str.equals("max") || str.equals("min")
+				|| str.equals("sum") || str.equals("ucase")
+				|| str.equals("lcase") || str.equals("mid")
+				|| str.equals("len") || str.equals("round")
+				|| str.equals("now") || str.equals("format")) {
+			return true;
+		} else {
+			return false;
 		}
 	}
 }
